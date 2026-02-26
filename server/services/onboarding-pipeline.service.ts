@@ -1,0 +1,629 @@
+import { logger } from '../db.js';
+import { db } from '../db.js';
+import { GitHubService } from './github.service.js';
+import { VercelService } from './vercel.service.js';
+import { HostingerApiService } from './hostinger-api.service.js';
+import { EmailService } from './email.service.js';
+
+/**
+ * Onboarding Pipeline Service
+ * Orchestrates the complete restaurant onboarding automation
+ */
+export class OnboardingPipelineService {
+  private github: GitHubService;
+  private vercel: VercelService;
+  private hostinger: HostingerApiService;
+  private email: EmailService;
+
+  constructor() {
+    this.github = new GitHubService();
+    this.vercel = new VercelService();
+    this.hostinger = new HostingerApiService();
+    this.email = new EmailService();
+  }
+
+  /**
+   * Complete wizard and trigger full onboarding automation
+   */
+  async completeWizard(sessionId: string) {
+    try {
+      logger.info({ sessionId }, 'Starting onboarding pipeline');
+
+      // Get wizard session
+      const session = await db.wizardSessions.findOne(sessionId);
+      if (!session) {
+        throw new Error('Wizard session not found');
+      }
+
+      const data = session.data || {};
+
+      // Step 1: Create tenant
+      const tenant = await this.createTenant(session, data);
+
+      // Update wizard session with tenant ID
+      await db.wizardSessions.update(sessionId, {
+        tenant_id: tenant.id,
+      });
+
+      // Step 2: Run automation tasks in parallel
+      const automationPromises = [
+        this.createGitHubRepo(tenant, data),
+        this.createEmailAccount(tenant, data),
+      ];
+
+      // Vercel deployment happens after GitHub repo is ready
+      // So we chain it
+      automationPromises.push(
+        this.createGitHubRepo(tenant, data).then(() =>
+          this.deployToVercel(tenant, data)
+        )
+      );
+
+      await Promise.allSettled(automationPromises);
+
+      // Step 3: Configure domain
+      await this.configureDomain(tenant, data);
+
+      // Step 4: Send welcome email
+      await this.sendWelcomeEmail(tenant);
+
+      // Step 5: Update tenant status to active
+      const activated = await db.tenants.update(tenant.id, {
+        status: 'active',
+      });
+
+      logger.info({
+        sessionId,
+        tenantId: tenant.id,
+        slug: tenant.slug,
+      }, 'Onboarding pipeline completed');
+
+      return activated;
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        sessionId,
+      }, 'Error in onboarding pipeline');
+
+      throw error;
+    }
+  }
+
+  /**
+   * Step 1: Create tenant
+   */
+  private async createTenant(session: any, data: any) {
+    try {
+      logger.info({
+        sessionId: session.id,
+        email: session.email,
+      }, 'Creating tenant');
+
+      // Generate slug from restaurant name
+      const slug = this.generateSlug(data.restaurantInfo?.name || session.email.split('@')[0]);
+
+      // Calculate monthly fee based on features
+      const monthlyFee = this.calculateMonthlyFee(data.features || {});
+
+      // Create tenant
+      const tenant = await db.tenants.create({
+        slug,
+        name: data.restaurantInfo?.name || 'New Restaurant',
+        name_en: data.restaurantInfo?.nameEn,
+        description: data.restaurantInfo?.description,
+        description_en: data.restaurantInfo?.descriptionEn,
+        status: 'pending',
+        subscription_tier: 'starter',
+        helmies_fee_percentage: 5.0,
+        monthly_fee: monthlyFee,
+        features: {
+          cashOnDelivery: data.features?.cashOnDelivery || false,
+          aiAssistant: data.features?.aiAssistant || false,
+          delivery: true,
+          pickup: true,
+          lunch: data.features?.lunch || false,
+          multiBranch: data.features?.multiBranch || false,
+        },
+        metadata: {
+          contact_email: session.email,
+          created_via_wizard: true,
+        },
+      });
+
+      // Initialize tenant with default data
+      await this.initializeTenantData(tenant.id, data, slug);
+
+      logger.info({
+        tenantId: tenant.id,
+        slug,
+      }, 'Tenant created successfully');
+
+      return tenant;
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, 'Error creating tenant');
+
+      throw error;
+    }
+  }
+
+  /**
+   * Initialize tenant with default data
+   */
+  private async initializeTenantData(tenantId: string, data: any, slug: string) {
+    try {
+      logger.info({ tenantId }, 'Initializing tenant data');
+
+      // 1. Create default branch
+      await sql`
+        INSERT INTO public.branches (tenant_id, name, address, city, postal_code, phone, email, is_default, is_active)
+        VALUES (${tenantId}, 'Main Branch',
+          ${data.branchInfo?.address || 'Address'},
+          ${data.branchInfo?.city || 'City'},
+          ${data.branchInfo?.postalCode || '00100'},
+          ${data.branchInfo?.phone || '+358 40 123 4567'},
+          ${data.restaurantInfo?.email || 'info@' + slug + '.fi'},
+          true,
+          true
+        )
+        ON CONFLICT DO NOTHING
+      `;
+
+      // 2. Create default categories based on cuisine type
+      const cuisineType = data.restaurantInfo?.cuisine || 'General';
+      const defaultCategories = this.getDefaultCategories(cuisineType);
+
+      for (const category of defaultCategories) {
+        await sql`
+          INSERT INTO public.categories (tenant_id, name, name_en, name_sv, description, description_en, order_index, is_active)
+          VALUES (
+            ${tenantId},
+            ${category.name},
+            ${category.nameEn || category.name},
+            ${category.nameSv || category.nameEn || category.name},
+            ${category.description || ''},
+            ${category.descriptionEn || category.description || ''},
+            ${category.order || 0},
+            true
+          )
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      // 3. Import menu items from parsed menu if available
+      if (data.menuUpload?.parsedMenu) {
+        await this.importParsedMenu(tenantId, data.menuUpload.parsedMenu);
+      }
+
+      // 4. Create restaurant configuration with theme
+      const theme = data.theme || this.getDefaultTheme();
+
+      await sql`
+        INSERT INTO public.restaurant_config (
+          tenant_id, theme, primary_color, secondary_color,
+          accent_color, background_color, text_color,
+          delivery_enabled, pickup_enabled, table_booking_enabled,
+          stripe_enabled, lunch_enabled, is_active
+        )
+        VALUES (
+          ${tenantId},
+          ${theme.name || 'default'},
+          ${theme.colors?.primary || '#FF8C00'},
+          ${theme.colors?.secondary || '#8B4513'},
+          ${theme.colors?.accent || '#F5E6D3'},
+          ${theme.colors?.background || '#ffffff'},
+          ${theme.colors?.text || '#1f2937'},
+          true,
+          true,
+          ${data.features?.tableBooking || false},
+          true,
+          ${data.features?.lunch || false},
+          true
+        )
+        ON CONFLICT (tenant_id) DO UPDATE SET
+          theme = COALESCE(EXCLUDED.theme, restaurant_config.theme),
+          primary_color = COALESCE(EXCLUDED.primary_color, restaurant_config.primary_color),
+          secondary_color = COALESCE(EXCLUDED.secondary_color, restaurant_config.secondary_color),
+          updated_at = NOW()
+      `;
+
+      // 5. Create default delivery areas
+      await sql`
+        INSERT INTO public.delivery_areas (tenant_id, name, postal_codes, min_order_amount, delivery_fee, is_active)
+        VALUES (
+          ${tenantId},
+          'Default Area',
+          ARRAY['00100', '00101', '00102', '00103'],
+          15.00,
+          5.00,
+          true
+        )
+        ON CONFLICT DO NOTHING
+      `;
+
+      logger.info({ tenantId }, 'Tenant data initialized successfully');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId,
+      }, 'Error initializing tenant data');
+
+      // Don't throw - tenant creation should succeed even if data init fails
+    }
+  }
+
+  /**
+   * Get default categories based on cuisine type
+   */
+  private getDefaultCategories(cuisineType: string): Array<{
+    name: string;
+    nameEn: string;
+    nameSv: string;
+    description?: string;
+    descriptionEn?: string;
+    order: number;
+  }> {
+    const categoryMap: Record<string, any[]> = {
+      'Italian': [
+        { name: 'Pizzat', nameEn: 'Pizzas', nameSv: 'Pizzor', description: 'Käsinpellat pitaleivät', descriptionEn: 'Handmade stone oven pizzas', order: 1 },
+        { name: 'Pastat', nameEn: 'Pasta', nameSv: 'Pasta', description: 'Italialaiset pastaruoat', descriptionEn: 'Italian pasta dishes', order: 2 },
+        { name: 'Jälkiruoat', nameEn: 'Desserts', nameSv: 'Efterrätter', description: 'Italialaiset herkut', descriptionEn: 'Italian desserts', order: 3 },
+      ],
+      'Asian': [
+        { name: 'Keittoruoat', nameEn: 'Wok Dishes', nameSv: 'Wokrätter', description: 'Aasialaiset wok-annokset', descriptionEn: 'Asian wok dishes', order: 1 },
+        { name: 'Sushi', nameEn: 'Sushi', nameSv: 'Sushi', description: 'Tuoreet sushiruoat', descriptionEn: 'Fresh sushi dishes', order: 2 },
+        { name: 'Noodle annokset', nameEn: 'Noodle Dishes', nameSv: 'Nudelrätter', description: 'Aasialaiset nuudeliruoat', descriptionEn: 'Asian noodle dishes', order: 3 },
+      ],
+      'Burger': [
+        { name: 'Hampurilaiset', nameEn: 'Burgers', nameSv: 'Hamburgare', description: 'Kotiburgereita ja gourmet-burgereita', descriptionEn: 'Beef and gourmet burgers', order: 1 },
+        { name: 'Ranskalaiset', nameEn: 'Fries', nameSv: 'Pommes frites', description: 'Rapeutuja ja lisukkeita', descriptionEn: 'Fries and sides', order: 2 },
+        { name: 'Juomat', nameEn: 'Drinks', nameSv: 'Drycker', description: 'Virvoituja ja alkoholittomat juomat', descriptionEn: 'Soft drinks and beverages', order: 3 },
+      ],
+      'Finnish': [
+        { name: 'Pääruoat', nameEn: 'Main Courses', nameSv: 'Huvudrätter', description: 'Suomalaiset pääruoat', descriptionEn: 'Finnish main courses', order: 1 },
+        { name: 'Jälkiruoat', nameEn: 'Desserts', nameSv: 'Efterrätter', description: 'Kotiruoat ja leivonnaiset', descriptionEn: 'Homemade desserts', order: 2 },
+        { name: 'Lounaat', nameEn: 'Lunch', nameSv: 'Lunch', description: 'Arkipäivän lounasruoat', descriptionEn: 'Daily lunch specials', order: 3 },
+      ],
+      'Pizza': [
+        { name: 'Pizzat', nameEn: 'Pizzas', nameSv: 'Pizzor', description: 'Käsinpellat pitaleivät', descriptionEn: 'Handmade stone oven pizzas', order: 1 },
+        { name: 'Kebab annokset', nameEn: 'Kebab Dishes', nameSv: 'Kebabrätter', description: 'Lämmin kebab-annokset', descriptionEn: 'Warm kebab dishes', order: 2 },
+        { name: 'Salaatit', nameEn: 'Salads', nameSv: 'Sallader', description: 'Tuoreet salaattia', descriptionEn: 'Fresh salads', order: 3 },
+      ],
+      'General': [
+        { name: 'Suosikit', nameEn: 'Favorites', nameSv: 'Favoriter', description: 'Ravintolan suosikkiruoat', descriptionEn: "Restaurant's favorites", order: 1 },
+        { name: 'Pääruoat', nameEn: 'Main Courses', nameSv: 'Huvudrätter', description: 'Lämpimät pääruoat', descriptionEn: 'Warm main courses', order: 2 },
+        { name: 'Jälkiruoat', nameEn: 'Desserts', nameSv: 'Efterrätter', description: 'Makeat herkut', descriptionEn: 'Sweet desserts', order: 3 },
+        { name: 'Juomat', nameEn: 'Beverages', nameSv: 'Drycker', description: 'Kuumat ja kylmät juomat', descriptionEn: 'Hot and cold beverages', order: 4 },
+      ],
+    };
+
+    return categoryMap[cuisineType] || categoryMap['General'];
+  }
+
+  /**
+   * Import parsed menu items into database
+   */
+  private async importParsedMenu(tenantId: string, parsedMenu: any) {
+    try {
+      logger.info({ tenantId, itemCount: parsedMenu.items?.length || 0 }, 'Importing parsed menu items');
+
+      const categories = parsedMenu.categories || [];
+      const items = parsedMenu.items || [];
+
+      // Create/update categories
+      const categoryIdMap = new Map<string, string>();
+
+      for (const category of categories) {
+        const result = await sql`
+          INSERT INTO public.categories (tenant_id, name, name_en, name_sv, description, description_en, order_index, is_active)
+          VALUES (
+            ${tenantId},
+            ${category.name},
+            ${category.name_en || category.name},
+            ${category.name_sv || category.name_en || category.name},
+            ${category.description || ''},
+            ${category.description_en || category.description || ''},
+            ${categoryIdMap.size + 1},
+            true
+          )
+          ON CONFLICT (tenant_id, name) DO UPDATE SET
+            name_en = EXCLUDED.name_en,
+            name_sv = EXCLUDED.name_sv,
+            updated_at = NOW()
+          RETURNING id
+        `;
+
+        if (result && result.length > 0) {
+          categoryIdMap.set(category.name, result[0].id);
+        }
+      }
+
+      // Create menu items
+      for (const item of items) {
+        // Get category ID
+        const categoryId = categoryIdMap.get(item.category);
+
+        const result = await sql`
+          INSERT INTO public.menu_items (
+            tenant_id, category_id, name, name_en, name_sv,
+            description, description_en, description_sv,
+            price, allergens, dietary, is_available, is_featured
+          )
+          VALUES (
+            ${tenantId},
+            ${categoryId || null},
+            ${item.name},
+            ${item.name_en || item.name},
+            ${item.name_sv || item.name_en || item.name},
+            ${item.description || ''},
+            ${item.description_en || item.description || ''},
+            ${item.description_sv || ''},
+            ${item.price || 0},
+            ${JSON.stringify(item.allergens || [])}::jsonb,
+            ${JSON.stringify(item.dietary || [])}::jsonb,
+            true,
+            false
+          )
+          ON CONFLICT DO NOTHING
+        `;
+
+        logger.debug({ itemName: item.name }, 'Menu item imported');
+      }
+
+      logger.info({ tenantId, itemCount: items.length }, 'Menu items imported successfully');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId,
+      }, 'Error importing parsed menu');
+    }
+  }
+
+  /**
+   * Get default theme
+   */
+  private getDefaultTheme() {
+    return {
+      name: 'Modern Orange',
+      colors: {
+        primary: '#FF8C00',
+        secondary: '#8B4513',
+        accent: '#F5E6D3',
+        background: '#ffffff',
+        text: '#1f2937',
+      },
+    };
+  }
+
+  /**
+   * Step 2a: Create GitHub repository
+   */
+  private async createGitHubRepo(tenant: any, data: any) {
+    try {
+      await db.onboardingTasks.create({
+        tenant_id: tenant.id,
+        task_type: 'github_repo',
+        status: 'in_progress',
+      });
+
+      await this.github.createTenantRepo(tenant.slug, tenant.id);
+
+      // Push template configuration
+      await this.github.pushTemplateCode(`${tenant.slug}-site`, tenant.id, {
+        tenant: {
+          id: tenant.id,
+          slug: tenant.slug,
+          name: tenant.name,
+        },
+        theme: data.theme,
+        domain: `${tenant.slug}.helmiesbites.fi`,
+      });
+
+      logger.info({
+        tenantId: tenant.id,
+        slug: tenant.slug,
+      }, 'GitHub repository created');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId: tenant.id,
+      }, 'Error creating GitHub repository');
+      throw error;
+    }
+  }
+
+  /**
+   * Step 2b: Create email account
+   */
+  private async createEmailAccount(tenant: any, data: any) {
+    try {
+      await db.onboardingTasks.create({
+        tenant_id: tenant.id,
+        task_type: 'email_account',
+        status: 'in_progress',
+      });
+
+      const emailResult = await this.hostinger.createEmailAccount({
+        tenantId: tenant.id,
+        tenantSlug: tenant.slug,
+        domain: 'helmiesbites.fi',
+      });
+
+      // Store credentials in tenant metadata
+      await db.tenants.update(tenant.id, {
+        metadata: {
+          ...(tenant.metadata || {}),
+          email: emailResult.email,
+          email_password: emailResult.password,
+        },
+      });
+
+      logger.info({
+        tenantId: tenant.id,
+        email: emailResult.email,
+      }, 'Email account created');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId: tenant.id,
+      }, 'Error creating email account');
+      throw error;
+    }
+  }
+
+  /**
+   * Step 2c: Deploy to Vercel
+   */
+  private async deployToVercel(tenant: any, data: any) {
+    try {
+      await db.onboardingTasks.create({
+        tenant_id: tenant.id,
+        task_type: 'vercel_deploy',
+        status: 'in_progress',
+      });
+
+      const repoUrl = `https://github.com/${process.env.GITHUB_ORG}/${tenant.slug}-site`;
+
+      const project = await this.vercel.createProject(tenant.slug, repoUrl, tenant.id);
+
+      // Trigger initial deployment
+      await this.vercel.deployProject(project.id, tenant.id);
+
+      // Configure subdomain
+      await this.vercel.configureDomain(project.id, `${tenant.slug}.helmiesbites.fi`, tenant.id);
+
+      logger.info({
+        tenantId: tenant.id,
+        projectId: project.id,
+      }, 'Vercel deployment completed');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId: tenant.id,
+      }, 'Error deploying to Vercel');
+      throw error;
+    }
+  }
+
+  /**
+   * Step 3: Configure domain
+   */
+  private async configureDomain(tenant: any, data: any) {
+    try {
+      const domainType = data.domainSetup?.type || 'subdomain';
+      let domain: string;
+
+      if (domainType === 'subdomain') {
+        domain = `${tenant.slug}.helmiesbites.fi`;
+
+        // Create subdomain DNS record
+        await this.hostinger.createSubdomain(tenant.slug, tenant.id, 'helmiesbites.fi');
+
+        await db.tenantDomains.create({
+          tenant_id: tenant.id,
+          domain_type: 'subdomain',
+          domain,
+          is_primary: true,
+        });
+      } else if (domainType === 'custom') {
+        domain = data.domainSetup?.customDomain;
+
+        // Configure CNAME for custom domain
+        await this.hostinger.configureCNAME(domain, tenant.id);
+
+        await db.tenantDomains.create({
+          tenant_id: tenant.id,
+          domain_type: 'custom',
+          domain,
+          is_primary: true,
+        });
+      } else if (domainType === 'path') {
+        domain = `helmiesbites.fi/${tenant.slug}`;
+
+        await db.tenantDomains.create({
+          tenant_id: tenant.id,
+          domain_type: 'path',
+          domain,
+          is_primary: true,
+        });
+      }
+
+      // Store primary domain in tenant metadata
+      await db.tenants.update(tenant.id, {
+        metadata: {
+          ...(tenant.metadata || {}),
+          primary_domain: domain,
+        },
+      });
+
+      logger.info({
+        tenantId: tenant.id,
+        domain,
+        domainType,
+      }, 'Domain configured');
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId: tenant.id,
+      }, 'Error configuring domain');
+      // Don't throw - domain issues can be resolved later
+    }
+  }
+
+  /**
+   * Step 4: Send welcome email
+   */
+  private async sendWelcomeEmail(tenant: any) {
+    try {
+      const success = await this.email.sendWelcomeEmail(tenant);
+
+      if (success) {
+        logger.info({
+          tenantId: tenant.id,
+          email: tenant.metadata.email,
+        }, 'Welcome email sent');
+      } else {
+        logger.warn({
+          tenantId: tenant.id,
+          email: tenant.metadata.email,
+        }, 'Failed to send welcome email');
+      }
+    } catch (error) {
+      logger.error({
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tenantId: tenant.id,
+      }, 'Error sending welcome email');
+      // Don't throw - email failures shouldn't block onboarding
+    }
+  }
+
+  /**
+   * Generate URL-safe slug from name
+   */
+  private generateSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove accents
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special chars
+      .trim()
+      .replace(/\s+/g, '-') // Replace spaces with hyphens
+      .replace(/-+/g, '-') // Replace multiple hyphens
+      .substring(0, 50); // Max length
+  }
+
+  /**
+   * Calculate monthly fee based on features
+   */
+  private calculateMonthlyFee(features: any): number {
+    let fee = 0;
+
+    if (features.cashOnDelivery) fee += 30;
+    if (features.aiAssistant) fee += 10;
+
+    return fee;
+  }
+}
+
+export default OnboardingPipelineService;

@@ -74,21 +74,33 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_config_tenant_id ON public.restaurant_
 ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_customers_tenant_id ON public.customers(tenant_id);
 
--- Promotions table
-ALTER TABLE public.promotions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS idx_promotions_tenant_id ON public.promotions(tenant_id);
+-- Promotions table (only if exists)
+DO $$ BEGIN
+  ALTER TABLE public.promotions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_promotions_tenant_id ON public.promotions(tenant_id);
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
--- Coupons table
-ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS idx_coupons_tenant_id ON public.coupons(tenant_id);
+-- Coupons table (only if exists)
+DO $$ BEGIN
+  ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_coupons_tenant_id ON public.coupons(tenant_id);
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
--- Lounas menus table
-ALTER TABLE public.lounas_menus ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS idx_lounas_menus_tenant_id ON public.lounas_menus(tenant_id);
+-- Lounas menus table (only if exists)
+DO $$ BEGIN
+  ALTER TABLE public.lounas_menus ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_lounas_menus_tenant_id ON public.lounas_menus(tenant_id);
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
--- Lounas settings table
-ALTER TABLE public.lounas_settings ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS idx_lounas_settings_tenant_id ON public.lounas_settings(tenant_id);
+-- Lounas settings table (only if exists)
+DO $$ BEGIN
+  ALTER TABLE public.lounas_settings ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_lounas_settings_tenant_id ON public.lounas_settings(tenant_id);
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
 -- ==========================================
 -- 3. WIZARD SESSIONS TABLE
@@ -477,6 +489,19 @@ ON CONFLICT DO NOTHING;
 -- ==========================================
 -- 10. HELPER FUNCTIONS FOR TENANT ISOLATION
 -- ==========================================
+
+-- Check if the current user is an admin
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN COALESCE(
+    current_setting('request.jwt.claims', true)::json->>'role' = 'admin',
+    FALSE
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Get current tenant ID from JWT claims
 CREATE OR REPLACE FUNCTION public.current_tenant_id()

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db, logger } from '../db.js';
 import crypto from 'crypto';
 import { OpenRouterService } from '../services/openrouter.service.js';
-import { upload } from '../index.js';
+import { upload } from '../middleware/upload.js';
 
 const router = Router();
 

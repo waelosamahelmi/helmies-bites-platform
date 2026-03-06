@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
 import PgStore from 'connect-pg-simple';
-import multer from 'multer';
+import { upload } from './middleware/upload.js';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { logger } from './db.js';
@@ -22,25 +22,7 @@ import analyticsRouter from './routes/analytics.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Multer configuration for file uploads (stored in memory)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
-  },
-  fileFilter: (req, file, cb) => {
-    // Allow images and PDFs
-    const allowedTypes = /jpeg|jpg|png|gif|webp|pdf/;
-    const extname = allowedTypes.test(file.mimetype);
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, WebP, and PDF files are allowed.'));
-    }
-  },
-});
+// Upload middleware imported from ./middleware/upload.js
 
 // Trust proxy for proper IP detection behind reverse proxy
 app.set('trust proxy', 1);
@@ -168,8 +150,6 @@ app.use('/api/ai', aiRouter);
 app.use('/api/support', authMiddleware, supportRouter);
 app.use('/api/analytics', authMiddleware, analyticsRouter);
 
-// Export upload middleware for use in routes
-export { upload };
 
 // 404 handler
 app.use((req, res) => {

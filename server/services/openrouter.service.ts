@@ -170,7 +170,7 @@ Extract ALL items with their prices. If ingredients are listed, include them in 
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://helmiesbites.fi',
+          'HTTP-Referer': 'https://helmiesbites.com',
           'X-Title': 'Helmies Bites',
         },
         body: JSON.stringify({
@@ -444,7 +444,7 @@ Return as JSON with complete Tailwind CSS theme structure including light and da
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://helmiesbites.fi',
+          'HTTP-Referer': 'https://helmiesbites.com',
           'X-Title': 'Helmies Bites',
         },
         body: JSON.stringify({

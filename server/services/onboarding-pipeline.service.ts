@@ -417,7 +417,7 @@ export class OnboardingPipelineService {
           name: tenant.name,
         },
         theme: data.theme,
-        domain: `${tenant.slug}.helmiesbites.fi`,
+        domain: `${tenant.slug}.helmiesbites.com`,
       });
 
       logger.info({
@@ -447,7 +447,7 @@ export class OnboardingPipelineService {
       const emailResult = await this.hostinger.createEmailAccount({
         tenantId: tenant.id,
         tenantSlug: tenant.slug,
-        domain: 'helmiesbites.fi',
+        domain: 'helmiesbites.com',
       });
 
       // Store credentials in tenant metadata
@@ -491,7 +491,7 @@ export class OnboardingPipelineService {
       await this.vercel.deployProject(project.id, tenant.id);
 
       // Configure subdomain
-      await this.vercel.configureDomain(project.id, `${tenant.slug}.helmiesbites.fi`, tenant.id);
+      await this.vercel.configureDomain(project.id, `${tenant.slug}.helmiesbites.com`, tenant.id);
 
       logger.info({
         tenantId: tenant.id,
@@ -515,10 +515,10 @@ export class OnboardingPipelineService {
       let domain: string;
 
       if (domainType === 'subdomain') {
-        domain = `${tenant.slug}.helmiesbites.fi`;
+        domain = `${tenant.slug}.helmiesbites.com`;
 
         // Create subdomain DNS record
-        await this.hostinger.createSubdomain(tenant.slug, tenant.id, 'helmiesbites.fi');
+        await this.hostinger.createSubdomain(tenant.slug, tenant.id, 'helmiesbites.com');
 
         await db.tenantDomains.create({
           tenant_id: tenant.id,
@@ -539,7 +539,7 @@ export class OnboardingPipelineService {
           is_primary: true,
         });
       } else if (domainType === 'path') {
-        domain = `helmiesbites.fi/${tenant.slug}`;
+        domain = `helmiesbites.com/${tenant.slug}`;
 
         await db.tenantDomains.create({
           tenant_id: tenant.id,

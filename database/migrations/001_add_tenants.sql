@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.tenants (
 );
 
 COMMENT ON TABLE public.tenants IS 'Multi-tenant restaurant registry';
-COMMENT ON COLUMN public.tenants.slug IS 'Subdomain prefix (e.g., ravbabylon for ravbabylon.helmiesbites.fi)';
+COMMENT ON COLUMN public.tenants.slug IS 'Subdomain prefix (e.g., ravbabylon for ravbabylon.helmiesbites.com)';
 COMMENT ON COLUMN public.tenants.status IS 'pending: wizard incomplete, active: live, suspended: payment issue, cancelled: closed';
 
 -- ==========================================
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS public.tenant_domains (
 );
 
 COMMENT ON TABLE public.tenant_domains IS 'Tenant domain configurations';
-COMMENT ON COLUMN public.tenant_domains.domain_type IS 'subdomain: restaurant.helmiesbites.fi, path: helmiesbites.fi/restaurant, custom: own domain, temporary: temp.helmiesbites.fi';
+COMMENT ON COLUMN public.tenant_domains.domain_type IS 'subdomain: restaurant.helmiesbites.com, path: helmiesbites.com/restaurant, custom: own domain, temporary: temp.helmiesbites.com';
 
 CREATE INDEX IF NOT EXISTS idx_tenant_domains_tenant_id ON public.tenant_domains(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_domains_domain ON public.tenant_domains(domain);

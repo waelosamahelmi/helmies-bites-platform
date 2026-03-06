@@ -205,7 +205,7 @@ router.post('/vercel/deploy',
           slug,
           repoUrl,
           domainType,
-          domain: domain || `${slug}.helmiesbites.fi`
+          domain: domain || `${slug}.helmiesbites.com`
         });
 
         // Update task as completed
@@ -271,13 +271,13 @@ router.post('/email/create',
         tenant_id: tenantId,
         task_type: 'email_creation',
         status: 'in_progress',
-        data: { email: `${slug}@helmiesbites.fi` }
+        data: { email: `${slug}@helmiesbites.com` }
       });
 
       try {
         // Create email account via Hostinger
         const email = await hostingerService.createEmailAccount({
-          domain: 'helmiesbites.fi',
+          domain: 'helmiesbites.com',
           email: slug,
           password
         });
@@ -543,7 +543,7 @@ async function runOnboardingPipeline(
             slug,
             repoUrl: `https://github.com/${process.env.GITHUB_ORG}/${slug}-site`,
             domainType: config.domainType || 'subdomain',
-            domain: config.domain || `${slug}.helmiesbites.fi`
+            domain: config.domain || `${slug}.helmiesbites.com`
           });
           await db.onboardingTasks.updateByTenantAndType(
             tenantId,
@@ -570,7 +570,7 @@ async function runOnboardingPipeline(
       (async () => {
         try {
           await hostingerService.createEmailAccount({
-            domain: 'helmiesbites.fi',
+            domain: 'helmiesbites.com',
             email: slug,
             password: config.emailPassword || generatePassword()
           });

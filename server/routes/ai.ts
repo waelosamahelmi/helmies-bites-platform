@@ -45,7 +45,7 @@ async function callOpenRouter(request: OpenRouterRequest): Promise<any> {
       headers: {
         'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://helmiesbites.fi',
+        'HTTP-Referer': 'https://helmiesbites.com',
         'X-Title': 'Helmies Bites Platform'
       },
       body: JSON.stringify(request)

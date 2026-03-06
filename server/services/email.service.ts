@@ -63,7 +63,7 @@ export class EmailService {
         data = {},
         html,
         text,
-        from = process.env.EMAIL_FROM || 'noreply@helmiesbites.fi',
+        from = process.env.EMAIL_FROM || 'noreply@helmiesbites.com',
         fromName = process.env.EMAIL_FROM_NAME || 'Helmies Bites',
       } = config;
 
@@ -134,8 +134,8 @@ export class EmailService {
         restaurantName: tenant.name,
         email: tenant.metadata.email,
         password: tenant.metadata.password,
-        adminUrl: `https://${tenant.slug}.helmiesbites.fi/admin`,
-        siteUrl: `https://${tenant.slug}.helmiesbites.fi`,
+        adminUrl: `https://${tenant.slug}.helmiesbites.com/admin`,
+        siteUrl: `https://${tenant.slug}.helmiesbites.com`,
       },
       subject: `Welcome to Helmies Bites! 🍽️`,
     });
@@ -198,7 +198,7 @@ export class EmailService {
     tenant?: { name: string };
     priority: string;
   }): Promise<boolean> {
-    const supportEmail = process.env.SUPPORT_EMAIL || 'support@helmiesbites.fi';
+    const supportEmail = process.env.SUPPORT_EMAIL || 'support@helmiesbites.com';
 
     return this.send({
       to: supportEmail,
@@ -214,7 +214,7 @@ export class EmailService {
             <p><strong>Message:</strong></p>
             <p style="background: white; padding: 15px; border-left: 3px solid #FF8C00;">${ticket.message}</p>
           </div>
-          <p><a href="https://admin.helmiesbites.fi/support/tickets/${ticket.id}" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Ticket</a></p>
+          <p><a href="https://admin.helmiesbites.com/support/tickets/${ticket.id}" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Ticket</a></p>
         </div>
       `,
     });
@@ -247,7 +247,7 @@ export class EmailService {
             <p><strong>Update:</strong></p>
             <p style="background: white; padding: 15px; border-left: 3px solid #FF8C00;">${message}</p>
           </div>
-          <p><a href="https://admin.helmiesbites.fi/support" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Ticket</a></p>
+          <p><a href="https://admin.helmiesbites.com/support" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Ticket</a></p>
         </div>
       `,
     });
@@ -284,7 +284,7 @@ export class EmailService {
             <ul style="background: white; padding: 15px; border-radius: 5px;">${itemsList}</ul>
             <p><strong>Total:</strong> €${order.totalAmount.toFixed(2)}</p>
           </div>
-          <p><a href="https://admin.helmiesbites.fi/orders" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Order</a></p>
+          <p><a href="https://admin.helmiesbites.com/orders" style="display: inline-block; padding: 10px 20px; background: #FF8C00; color: white; text-decoration: none; border-radius: 5px;">View Order</a></p>
         </div>
       `,
     });

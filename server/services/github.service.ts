@@ -122,7 +122,7 @@ export class GitHubService {
           theme: config.theme || {},
           domain: config.domain,
           api: {
-            url: process.env.PLATFORM_URL || 'https://api.helmiesbites.fi',
+            url: process.env.PLATFORM_URL || 'https://api.helmiesbites.com',
             tenantId: config.tenant?.id,
           },
         }, null, 2)
@@ -143,7 +143,7 @@ export class GitHubService {
         'VITE_SUPABASE_ANON_KEY': process.env.SUPABASE_ANON_KEY || '',
         'VITE_TENANT_ID': config.tenant?.id || '',
         'VITE_TENANT_SLUG': config.tenant?.slug || '',
-        'VITE_API_URL': process.env.PLATFORM_URL || 'https://api.helmiesbites.fi',
+        'VITE_API_URL': process.env.PLATFORM_URL || 'https://api.helmiesbites.com',
       }, '\n').toString('base64');
 
       await this.octokit.rest.repos.createOrUpdateFileContents({

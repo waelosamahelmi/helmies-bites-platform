@@ -65,7 +65,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://bites.helmies.fi',
-  'https://admin.helmiesbites.fi',
+  'https://admin.helmiesbites.com',
 ];
 
 app.use(cors({
@@ -73,7 +73,7 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    // Check if origin is allowed or is a subdomain of helmiesbites.fi
+    // Check if origin is allowed or is a subdomain of helmiesbites.com
     const isAllowed = allowedOrigins.some(allowed => {
       if (allowed.includes('*')) {
         // Handle wildcard subdomains
@@ -116,7 +116,7 @@ if (process.env.SESSION_SECRET) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      domain: process.env.NODE_ENV === 'production' ? '.helmiesbites.fi' : undefined,
+      domain: process.env.NODE_ENV === 'production' ? '.helmiesbites.com' : undefined,
     },
   }));
 }

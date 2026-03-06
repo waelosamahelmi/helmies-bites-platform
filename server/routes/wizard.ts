@@ -425,8 +425,8 @@ router.post('/complete', async (req: Request, res: Response) => {
     res.json({
       tenant,
       message: 'Wizard completed successfully',
-      adminUrl: `https://${tenant.slug}.helmiesbites.fi/admin`,
-      siteUrl: `https://${tenant.slug}.helmiesbites.fi`,
+      adminUrl: `https://${tenant.slug}.helmiesbites.com/admin`,
+      siteUrl: `https://${tenant.slug}.helmiesbites.com`,
     });
   } catch (error) {
     logger.error({

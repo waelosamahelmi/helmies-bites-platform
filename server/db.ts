@@ -303,6 +303,189 @@ export const db = {
     `,
   },
 
+  // Customers
+  customers: {
+    findAll: (conditions: any = {}, limit = 50, offset = 0) => {
+      const tenantId = conditions.tenant_id;
+      if (!tenantId) return sql`SELECT 1 WHERE FALSE`;
+      const search = conditions.search;
+      if (search) {
+        return sql`
+          SELECT * FROM public.customers
+          WHERE tenant_id = ${tenantId}
+            AND (name ILIKE ${'%' + search + '%'} OR email ILIKE ${'%' + search + '%'} OR phone ILIKE ${'%' + search + '%'})
+          ORDER BY created_at DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `;
+      }
+      return sql`
+        SELECT * FROM public.customers
+        WHERE tenant_id = ${tenantId}
+        ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+    },
+
+    findOne: (conditions: any) => {
+      if (conditions.id) {
+        return sql`SELECT * FROM public.customers WHERE id = ${conditions.id} LIMIT 1`;
+      }
+      if (conditions.email && conditions.tenant_id) {
+        return sql`SELECT * FROM public.customers WHERE email = ${conditions.email} AND tenant_id = ${conditions.tenant_id} LIMIT 1`;
+      }
+      return sql`SELECT 1 WHERE FALSE`;
+    },
+
+    create: (data: any) => sql`
+      INSERT INTO public.customers (tenant_id, email, name, phone, auth_user_id, loyalty_points, metadata)
+      VALUES (${data.tenant_id}, ${data.email}, ${data.name || null}, ${data.phone || null},
+              ${data.auth_user_id || null}, ${data.loyalty_points || 0}, ${data.metadata || {}})
+      RETURNING *
+    `,
+
+    update: (id: string, data: any) => sql`
+      UPDATE public.customers
+      SET name = COALESCE(${data.name || null}, name),
+          phone = COALESCE(${data.phone || null}, phone),
+          is_active = COALESCE(${data.is_active ?? null}, is_active),
+          metadata = COALESCE(${data.metadata || null}, metadata),
+          updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `,
+
+    getOrderStatistics: (customerId: string) => sql`
+      SELECT
+        COUNT(*) as total_orders,
+        COALESCE(SUM(total_amount), 0) as total_spent,
+        MAX(created_at) as last_order_date
+      FROM public.orders
+      WHERE customer_email = (SELECT email FROM public.customers WHERE id = ${customerId})
+    `,
+
+    getOrders: (customerId: string, limit = 20, offset = 0) => sql`
+      SELECT * FROM public.orders
+      WHERE customer_email = (SELECT email FROM public.customers WHERE id = ${customerId})
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `,
+
+    getDetailedOrderHistory: (customerId: string) => sql`
+      SELECT o.*, json_agg(oi.*) as items
+      FROM public.orders o
+      LEFT JOIN public.order_items oi ON oi.order_id = o.id
+      WHERE o.customer_email = (SELECT email FROM public.customers WHERE id = ${customerId})
+      GROUP BY o.id
+      ORDER BY o.created_at DESC
+      LIMIT 50
+    `,
+  },
+
+  // Orders
+  orders: {
+    findAll: (conditions: any = {}, limit = 50, offset = 0) => {
+      const tenantId = conditions.tenant_id;
+      if (!tenantId) return sql`SELECT 1 WHERE FALSE`;
+      const status = conditions.status;
+      if (status) {
+        return sql`
+          SELECT * FROM public.orders
+          WHERE tenant_id = ${tenantId} AND status = ${status}
+          ORDER BY created_at DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `;
+      }
+      return sql`
+        SELECT * FROM public.orders
+        WHERE tenant_id = ${tenantId}
+        ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `;
+    },
+
+    findOne: (conditions: any) => {
+      if (conditions.id && conditions.tenant_id) {
+        return sql`SELECT * FROM public.orders WHERE id = ${conditions.id} AND tenant_id = ${conditions.tenant_id} LIMIT 1`;
+      }
+      if (conditions.id) {
+        return sql`SELECT * FROM public.orders WHERE id = ${conditions.id} LIMIT 1`;
+      }
+      return sql`SELECT 1 WHERE FALSE`;
+    },
+
+    create: (data: any) => sql`
+      INSERT INTO public.orders (
+        tenant_id, order_number, customer_name, customer_phone, customer_email,
+        order_type, delivery_address, branch_id, status,
+        subtotal, delivery_fee, total_amount,
+        payment_method, payment_status, special_instructions
+      ) VALUES (
+        ${data.tenant_id}, ${data.order_number}, ${data.customer_name}, ${data.customer_phone},
+        ${data.customer_email || null}, ${data.order_type}, ${data.delivery_address || null},
+        ${data.branch_id || null}, ${data.status || 'pending'},
+        ${data.subtotal}, ${data.delivery_fee || 0}, ${data.total_amount},
+        ${data.payment_method || 'cash'}, ${data.payment_status || 'pending'},
+        ${data.special_instructions || null}
+      )
+      RETURNING *
+    `,
+
+    update: (id: string, data: any) => sql`
+      UPDATE public.orders
+      SET status = COALESCE(${data.status || null}, status),
+          payment_status = COALESCE(${data.payment_status || null}, payment_status),
+          stripe_payment_intent_id = COALESCE(${data.stripe_payment_intent_id || null}, stripe_payment_intent_id),
+          updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `,
+  },
+
+  // Menu Items
+  menuItems: {
+    findAll: (conditions: any = {}) => {
+      const tenantId = conditions.tenant_id;
+      if (!tenantId) return sql`SELECT 1 WHERE FALSE`;
+      if (conditions.category_id) {
+        return sql`
+          SELECT * FROM public.menu_items
+          WHERE tenant_id = ${tenantId} AND category_id = ${conditions.category_id} AND is_available = true
+          ORDER BY display_order ASC
+        `;
+      }
+      return sql`
+        SELECT * FROM public.menu_items
+        WHERE tenant_id = ${tenantId} AND is_available = true
+        ORDER BY display_order ASC
+      `;
+    },
+
+    findOne: (conditions: any) => {
+      if (conditions.id) {
+        return sql`SELECT * FROM public.menu_items WHERE id = ${conditions.id} LIMIT 1`;
+      }
+      return sql`SELECT 1 WHERE FALSE`;
+    },
+  },
+
+  // Categories
+  categories: {
+    findAll: (tenantId: string) => sql`
+      SELECT * FROM public.categories
+      WHERE tenant_id = ${tenantId} AND is_active = true
+      ORDER BY display_order ASC
+    `,
+  },
+
+  // Branches
+  branches: {
+    findAll: (tenantId: string) => sql`
+      SELECT * FROM public.branches
+      WHERE tenant_id = ${tenantId} AND is_active = true
+      ORDER BY display_order ASC
+    `,
+  },
+
   // Statistics
   statistics: {
     getPlatformOverview: async () => {

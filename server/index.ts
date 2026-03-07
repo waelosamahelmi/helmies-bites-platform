@@ -18,6 +18,16 @@ import stripeRouter from './routes/stripe.js';
 import aiRouter from './routes/ai.js';
 import supportRouter from './routes/support.js';
 import analyticsRouter from './routes/analytics.js';
+import customersRouter from './routes/customers.js';
+import ordersRouter from './routes/orders.js';
+import categoriesRouter from './routes/categories.js';
+import menuItemsRouter from './routes/menu-items.js';
+import loyaltyRouter from './routes/loyalty.js';
+import lounasMenusRouter from './routes/lounas-menus.js';
+import lounasSettingsRouter from './routes/lounas-settings.js';
+import couponsRouter from './routes/coupons.js';
+import deliveryAreasRouter from './routes/delivery-areas.js';
+import restaurantConfigRouter from './routes/restaurant-config.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -149,6 +159,16 @@ app.use('/api/stripe', stripeRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/support', authMiddleware, supportRouter);
 app.use('/api/analytics', authMiddleware, analyticsRouter);
+app.use('/api/customers', authMiddleware, customersRouter);
+app.use('/api/orders', ordersRouter);
+app.use('/api/categories', categoriesRouter);
+app.use('/api/menu-items', menuItemsRouter);
+app.use('/api/loyalty', loyaltyRouter);
+app.use('/api/lounas-menus', authMiddleware, lounasMenusRouter);
+app.use('/api/lounas-settings', authMiddleware, lounasSettingsRouter);
+app.use('/api/coupons', authMiddleware, couponsRouter);
+app.use('/api/delivery-areas', authMiddleware, deliveryAreasRouter);
+app.use('/api/restaurant-config', restaurantConfigRouter);
 
 
 // 404 handler

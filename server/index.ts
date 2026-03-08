@@ -55,7 +55,17 @@ app.use(helmet({
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176',
   'http://localhost:3000',
+  'http://localhost:3001',
+  'http://69.62.126.13:5173',
+  'http://69.62.126.13:5174',
+  'http://69.62.126.13:5175',
+  'http://69.62.126.13:5176',
+  'http://69.62.126.13:3000',
+  'http://69.62.126.13:3001',
   'https://bites.helmies.fi',
   'https://admin.helmiesbites.com',
 ];
@@ -64,6 +74,13 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+
+    // In development, allow localhost and server IP
+    if (process.env.NODE_ENV !== 'production') {
+      if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('69.62.126.13')) {
+        return callback(null, true);
+      }
+    }
 
     // Check if origin is allowed or is a subdomain of helmiesbites.com
     const isAllowed = allowedOrigins.some(allowed => {

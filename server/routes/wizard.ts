@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { db, logger } from '../db.js';
+import { db, logger, sql } from '../db.js';
 import crypto from 'crypto';
 import { OpenRouterService } from '../services/openrouter.service.js';
 import { upload } from '../middleware/upload.js';
@@ -55,7 +55,8 @@ router.post('/start', async (req: Request, res: Response) => {
     const { email } = validationResult.data;
 
     // Check for existing in-progress session
-    const existingSession = await db.wizardSessions.findByEmail(email);
+    const existingSessions = await db.wizardSessions.findByEmail(email);
+    const existingSession = Array.isArray(existingSessions) ? existingSessions[0] : existingSessions;
 
     if (existingSession && existingSession.status === 'in_progress') {
       logger.info({
@@ -70,12 +71,13 @@ router.post('/start', async (req: Request, res: Response) => {
     }
 
     // Create new session
-    const session = await db.wizardSessions.create({
+    const newSessions = await db.wizardSessions.create({
       email,
       step: 'restaurant-info',
       data: {},
       status: 'in_progress',
     });
+    const session = Array.isArray(newSessions) ? newSessions[0] : newSessions;
 
     logger.info({
       sessionId: session.id,
@@ -115,7 +117,8 @@ router.post('/step/:step', async (req: Request, res: Response) => {
     }
 
     // Get existing session
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
 
     if (!session) {
       return res.status(404).json({
@@ -135,10 +138,11 @@ router.post('/step/:step', async (req: Request, res: Response) => {
     };
 
     // Update session
-    const updated = await db.wizardSessions.update(sessionId, {
+    const updatedResults = await db.wizardSessions.update(sessionId, {
       step,
       data: mergedData,
     });
+    const updated = Array.isArray(updatedResults) ? updatedResults[0] : updatedResults;
 
     logger.info({
       sessionId,
@@ -181,7 +185,8 @@ router.post('/ai-generate', async (req: Request, res: Response) => {
     const { sessionId, input, type, language } = validationResult.data;
 
     // Verify session exists
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
     if (!session) {
       return res.status(404).json({
         error: 'Not Found',
@@ -255,7 +260,8 @@ router.post('/parse-menu', upload.single('file'), async (req: Request, res: Resp
       });
     }
 
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
     if (!session) {
       return res.status(404).json({
         error: 'Not Found',
@@ -311,12 +317,19 @@ router.post('/parse-menu', upload.single('file'), async (req: Request, res: Resp
 /**
  * POST /api/wizard/generate-images
  * Generate menu item images using AI
+ * 
+ * Body params:
+ * - sessionId: string
+ * - menuItems: MenuItem[]
+ * - theme: any
+ * - testMode: boolean (optional) - if true, only generates 1 image for debugging
  */
 router.post('/generate-images', async (req: Request, res: Response) => {
   try {
-    const { sessionId, menuItems, theme } = req.body;
+    const { sessionId, menuItems, theme, testMode } = req.body;
 
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
     if (!session) {
       return res.status(404).json({
         error: 'Not Found',
@@ -325,25 +338,42 @@ router.post('/generate-images', async (req: Request, res: Response) => {
     }
 
     const aiService = new OpenRouterService();
-    const images = await aiService.generateMenuImages(menuItems, theme);
+    
+    // In test mode, only generate image for the first item
+    const itemsToProcess = testMode ? [menuItems[0]] : menuItems;
+    
+    logger.info({
+      sessionId,
+      testMode: !!testMode,
+      itemCount: itemsToProcess.length,
+      firstItem: itemsToProcess[0]?.name,
+    }, 'Starting menu image generation');
+
+    const images = await aiService.generateMenuImages(itemsToProcess, theme);
 
     logger.info({
       sessionId,
-      count: menuItems.length,
+      count: images.length,
+      testMode: !!testMode,
     }, 'Menu image generation completed');
 
     res.json({
       images,
-      message: 'Images generated successfully',
+      testMode: !!testMode,
+      message: testMode 
+        ? `Test mode: Generated 1 image for "${itemsToProcess[0]?.name}"` 
+        : `Generated ${images.length} images`,
     });
   } catch (error) {
     logger.error({
       error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
     }, 'Error generating menu images');
 
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'Failed to generate images',
+      details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : undefined,
     });
   }
 });
@@ -356,7 +386,8 @@ router.post('/generate-branding', async (req: Request, res: Response) => {
   try {
     const { sessionId, restaurantName, cuisine } = req.body;
 
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
     if (!session) {
       return res.status(404).json({
         error: 'Not Found',
@@ -394,9 +425,10 @@ router.post('/generate-branding', async (req: Request, res: Response) => {
  */
 router.post('/complete', async (req: Request, res: Response) => {
   try {
-    const { sessionId } = req.body;
+    const { sessionId, restaurantInfo, features, menuItems, theme, domain, stripe, logoUrl, logoSvg, operatingHours } = req.body;
 
-    const session = await db.wizardSessions.findOne(sessionId);
+    const sessionArr = await db.wizardSessions.findOne(sessionId);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
     if (!session) {
       return res.status(404).json({
         error: 'Not Found',
@@ -404,11 +436,26 @@ router.post('/complete', async (req: Request, res: Response) => {
       });
     }
 
-    // Update session status
-    await db.wizardSessions.update(sessionId, {
-      status: 'completed',
-      step: 'completed',
-    });
+    const sessionData = session.data || {};
+
+    // Merge request body with session data - preserve logoUrl from session if not in request
+    const mergedData = {
+      ...sessionData,
+      restaurantInfo: restaurantInfo || sessionData.restaurantInfo,
+      features: features || sessionData.features,
+      menuItems: menuItems || sessionData.menuItems,
+      theme: theme || sessionData.theme,
+      domain: domain || sessionData.domain,
+      stripe: stripe || sessionData.stripe,
+      // Logo: prefer request body, then session step data, then session root
+      logoUrl: logoUrl || sessionData['theme']?.logoUrl || sessionData.logoUrl,
+      logoSvg: logoSvg || sessionData['theme']?.logoSvg || sessionData.logoSvg,
+      // Operating hours
+      operatingHours: operatingHours || sessionData.operatingHours || sessionData['features']?.operatingHours,
+    };
+
+    // Update session with merged data
+    await sql`UPDATE public.wizard_sessions SET status = 'completed', step = 'completed', data = ${mergedData} WHERE id = ${sessionId}`;
 
     // Import and trigger onboarding pipeline
     const { OnboardingPipelineService } = await import('../services/onboarding-pipeline.service.js');
@@ -449,7 +496,8 @@ router.get('/session/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const session = await db.wizardSessions.findOne(id);
+    const sessionArr = await db.wizardSessions.findOne(id);
+    const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
 
     if (!session) {
       return res.status(404).json({
@@ -489,9 +537,10 @@ router.post('/session/:id/abandon', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const session = await db.wizardSessions.update(id, {
+    const updatedResults = await db.wizardSessions.update(id, {
       status: 'abandoned',
     });
+    const session = Array.isArray(updatedResults) ? updatedResults[0] : updatedResults;
 
     logger.info({
       sessionId: id,

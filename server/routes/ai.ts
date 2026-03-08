@@ -136,7 +136,7 @@ Return the data as a JSON object with categories, items, prices, descriptions in
     }
 
     const request: OpenRouterRequest = {
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',
@@ -155,7 +155,7 @@ Return the data as a JSON object with categories, items, prices, descriptions in
 
     // Generate Swedish translation if needed
     const swedishResult = await callOpenRouter({
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',
@@ -267,7 +267,7 @@ router.post('/generate-branding', async (req: Request, res: Response) => {
 
     // Generate color palette
     const colorRequest: OpenRouterRequest = {
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',
@@ -289,7 +289,7 @@ router.post('/generate-branding', async (req: Request, res: Response) => {
 
     // Generate font suggestions
     const fontRequest: OpenRouterRequest = {
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',
@@ -342,7 +342,7 @@ router.post('/translate', async (req: Request, res: Response) => {
       const langName = lang === 'fi' ? 'Finnish' : lang === 'sv' ? 'Swedish' : 'English';
 
       const request: OpenRouterRequest = {
-        model: 'google/gemini-2.0-flash-exp:free',
+        model: 'openrouter/free',
         messages: [
           {
             role: 'system',
@@ -388,7 +388,7 @@ router.post('/generate-theme', async (req: Request, res: Response) => {
     const { restaurantName, cuisine, preferences } = req.body;
 
     const request: OpenRouterRequest = {
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',
@@ -446,7 +446,7 @@ router.post('/generate-description', async (req: Request, res: Response) => {
     const { restaurantName, cuisine, specialities, city } = req.body;
 
     const request: OpenRouterRequest = {
-      model: 'google/gemini-2.0-flash-exp:free',
+      model: 'openrouter/free',
       messages: [
         {
           role: 'system',

@@ -45,14 +45,17 @@ export class OpenRouterService {
   private apiUrl: string;
   private chatModel: string;
   private visionModel: string;
-  private imageModel: string;
+  private foodImageApiKey: string;
+  private foodImageModel: string;
 
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY || '';
     this.apiUrl = process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1/chat/completions';
     this.chatModel = process.env.OPENROUTER_MODEL_CHAT || 'z-ai/glm-4.5-air:free';
-    this.visionModel = process.env.OPENROUTER_MODEL_VISION || 'openai/gpt-4-vision-preview';
-    this.imageModel = process.env.OPENROUTER_MODEL_IMAGE || 'dall-e/dall-e-3';
+    this.visionModel = process.env.OPENROUTER_MODEL_VISION || 'openai/gpt-4o';
+    // Food image generation (paid service - €20, runs after payment)
+    this.foodImageApiKey = process.env.OPENROUTER_FOOD_IMAGE_API_KEY || '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';
+    this.foodImageModel = process.env.OPENROUTER_FOOD_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
   }
 
   /**
@@ -332,7 +335,9 @@ Since I cannot process the PDF directly, please provide either:
   }
 
   /**
-   * Generate menu item images
+   * Generate menu item images (PAID SERVICE - €20)
+   * Uses google/gemini-2.5-flash-image via OpenRouter
+   * Called AFTER payment is confirmed
    */
   async generateMenuImages(
     menuItems: MenuItem[],
@@ -342,9 +347,24 @@ Since I cannot process the PDF directly, please provide either:
 
     for (const item of menuItems) {
       try {
-        const prompt = `Professional food photography of ${item.name}, ${theme?.style || 'restaurant'} style, studio lighting, white background, high resolution, appetizing presentation`;
+        // Build ingredient list from description if available
+        const ingredients = item.description || item.name;
+        
+        const prompt = `Professional food photography of ${item.name}.
 
-        const imageUrl = await this.generateImage(prompt, item.name);
+Requirements:
+- TOP VIEW angle (bird's eye view)
+- SQUARE format (1:1 aspect ratio)
+- Show the actual ingredients: ${ingredients}
+- Clean white or light marble background
+- Professional restaurant-quality presentation
+- High resolution, sharp focus
+- Natural lighting, appetizing colors
+- No text or watermarks
+
+The dish should look exactly as it would be served in a high-end restaurant.`;
+
+        const imageUrl = await this.generateFoodImage(prompt, item.name);
 
         images.push({
           menuItemId: item.name,
@@ -352,8 +372,8 @@ Since I cannot process the PDF directly, please provide either:
           imageUrl,
         });
 
-        // Small delay to avoid rate limiting
-        await this.delay(1000);
+        // Delay to avoid rate limiting
+        await this.delay(2000);
       } catch (error) {
         logger.error({ error, itemName: item.name }, 'Error generating image for item');
         // Continue with next item
@@ -364,34 +384,177 @@ Since I cannot process the PDF directly, please provide either:
   }
 
   /**
+   * Generate a single food image using Gemini
+   * PAID SERVICE - only called after payment confirmation
+   */
+  private async generateFoodImage(prompt: string, itemName: string): Promise<string> {
+    try {
+      logger.info({ 
+        itemName, 
+        model: this.foodImageModel,
+        apiKeyPrefix: this.foodImageApiKey.substring(0, 20) + '...',
+      }, 'Starting food image generation');
+
+      const requestBody = {
+        model: this.foodImageModel,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      };
+
+      logger.info({ requestBody: JSON.stringify(requestBody).substring(0, 200) }, 'Request body');
+
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.foodImageApiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://helmiesbites.com',
+          'X-Title': 'Helmies Bites Menu Images',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const responseText = await response.text();
+      logger.info({ 
+        status: response.status, 
+        responsePreview: responseText.substring(0, 500),
+        itemName 
+      }, 'Food image API response');
+
+      if (!response.ok) {
+        logger.error({ error: responseText, itemName, status: response.status }, 'Food image API error');
+        throw new Error(`Food image generation failed: ${response.status} - ${responseText}`);
+      }
+
+      const data = JSON.parse(responseText);
+      
+      // Log the full response structure for debugging
+      logger.info({ 
+        itemName,
+        hasChoices: !!data.choices,
+        choicesLength: data.choices?.length,
+        firstChoice: data.choices?.[0],
+        messageContent: data.choices?.[0]?.message?.content?.substring?.(0, 100),
+      }, 'Parsed response structure');
+
+      // Extract image from response - Gemini may return image in different formats
+      const message = data.choices?.[0]?.message;
+      
+      // Check for images array (Gemini format - message.images)
+      if (Array.isArray(message?.images)) {
+        for (const part of message.images) {
+          if (part.type === 'image' || part.type === 'image_url') {
+            const imageData = part.image_url?.url || part.url || part.data;
+            if (imageData) {
+              logger.info({ itemName }, 'Found image in message.images array');
+              return imageData;
+            }
+          }
+        }
+      }
+      
+      // Check for inline image data in content array (alternative Gemini format)
+      if (Array.isArray(message?.content)) {
+        for (const part of message.content) {
+          if (part.type === 'image' || part.type === 'image_url') {
+            const imageData = part.image_url?.url || part.url || part.data;
+            if (imageData) {
+              logger.info({ itemName }, 'Found image in content array');
+              return imageData;
+            }
+          }
+        }
+      }
+
+      // Check for base64 image in content string
+      const imageContent = typeof message?.content === 'string' ? message.content : null;
+      
+      if (imageContent && imageContent.startsWith('data:image')) {
+        logger.info({ itemName }, 'Found base64 image in content');
+        return imageContent;
+      }
+      
+      // If response contains a URL
+      if (imageContent && imageContent.startsWith('http')) {
+        logger.info({ itemName }, 'Found URL in content');
+        return imageContent;
+      }
+
+      // Check for image in different response locations
+      if (data.data?.[0]?.url) {
+        logger.info({ itemName }, 'Found image in data[0].url');
+        return data.data[0].url;
+      }
+
+      if (data.data?.[0]?.b64_json) {
+        logger.info({ itemName }, 'Found base64 in data[0].b64_json');
+        return `data:image/png;base64,${data.data[0].b64_json}`;
+      }
+
+      logger.warn({ itemName, fullResponse: JSON.stringify(data).substring(0, 1000) }, 'Unexpected food image response format');
+      return `https://placehold.co/512x512/8B4513/FFF?text=${encodeURIComponent(itemName)}`;
+    } catch (error) {
+      logger.error({ error: error instanceof Error ? error.message : error, itemName }, 'Error calling food image API');
+      throw error;
+    }
+  }
+
+  /**
    * Generate branding (logo and colors)
    */
   async generateBranding(
     restaurantName: string,
     cuisine: string
-  ): Promise<BrandingResult> {
+  ): Promise<BrandingResult & { logoSvg?: string }> {
     try {
-      // Generate logo
-      const logoPrompt = `Modern, minimalist logo for "${restaurantName}" ${cuisine} restaurant, clean design, professional, vector style, transparent background`;
-      const logoUrl = await this.generateImage(logoPrompt, `${restaurantName}-logo`);
+      // Generate SVG logo using chat AI (zai) - ICON ONLY, no text
+      const logoPrompt = `Create a modern, minimalist SVG ICON (not text) for a ${cuisine} restaurant named "${restaurantName}".
 
-      // Generate color palette
-      const colorPrompt = `Generate a professional color palette for a ${cuisine} restaurant named "${restaurantName}". Return as JSON:
+Requirements:
+- ICON ONLY - NO TEXT, NO LETTERS, NO WORDS
+- Simple, clean symbol/icon suitable for a restaurant
+- Use only 2-3 colors maximum
+- Must be a valid SVG that can be rendered in a browser
+- Size should be viewBox="0 0 200 200"
+- Professional and appetizing feel
+- Could be: food item, utensils, chef hat, plate, or abstract symbol related to ${cuisine}
+
+Return ONLY the SVG code, nothing else. No markdown, no explanation. Just the raw <svg>...</svg> code.`;
+
+      const logoSvg = await this.callChatAPI(logoPrompt);
+      
+      // Create a data URL from the SVG for preview
+      const logoUrl = `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`;
+
+      // Generate color palette using chat AI (zai)
+      const colorPrompt = `Generate a professional color palette for a ${cuisine} restaurant named "${restaurantName}". 
+
+Consider:
+- Colors that evoke appetite and warmth
+- Colors typical for ${cuisine} cuisine/culture
+- Professional restaurant branding
+
+Return ONLY valid JSON, no markdown:
 {
   "primary": "#hexcode",
   "secondary": "#hexcode",
   "accent": "#hexcode",
   "background": "#hexcode",
   "foreground": "#hexcode"
-}
-
-Use colors that complement the cuisine type and create an appetizing atmosphere.`;
+}`;
 
       const colorsResult = await this.callChatAPI(colorPrompt);
-      const colors = JSON.parse(colorsResult);
+      // Extract JSON from response (in case it has extra text)
+      const jsonMatch = colorsResult.match(/\{[\s\S]*\}/);
+      const colors = JSON.parse(jsonMatch ? jsonMatch[0] : colorsResult);
 
       return {
         logoUrl,
+        logoSvg,
         colors,
       };
     } catch (error) {
@@ -439,6 +602,8 @@ Return as JSON with complete Tailwind CSS theme structure including light and da
    */
   private async callChatAPI(prompt: string, systemPrompt?: string): Promise<string> {
     try {
+      logger.info({ model: this.chatModel }, 'Calling chat API');
+      
       const response = await fetch(this.apiUrl, {
         method: 'POST',
         headers: {
@@ -456,7 +621,7 @@ Return as JSON with complete Tailwind CSS theme structure including light and da
             { role: 'user', content: prompt },
           ],
           temperature: 0.7,
-          max_tokens: 2000,
+          max_tokens: 4000, // GLM needs more tokens for reasoning + response
         }),
       });
 
@@ -466,12 +631,17 @@ Return as JSON with complete Tailwind CSS theme structure including light and da
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
+      const message = data.choices?.[0]?.message;
+      
+      // Check for content (normal response) or reasoning (some free models)
+      const content = message?.content || message?.reasoning;
 
       if (!content) {
+        logger.error({ response: JSON.stringify(data).substring(0, 500) }, 'No content in chat response');
         throw new Error('No content in response from OpenRouter');
       }
 
+      logger.info({ contentLength: content.length }, 'Chat API response received');
       return content;
     } catch (error) {
       logger.error({ error }, 'Error calling OpenRouter chat API');

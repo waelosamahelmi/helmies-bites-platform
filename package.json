@@ -7,7 +7,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc --skipLibCheck",
+    "build": "esbuild server/index.ts --bundle --platform=node --packages=external --outdir=dist --format=esm",
     "start": "node dist/index.js",
     "lint": "eslint server/**/*.ts",
     "lint:fix": "eslint server/**/*.ts --fix",

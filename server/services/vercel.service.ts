@@ -1,4 +1,4 @@
-import { logger } from '../db.js';
+import { logger, sql } from '../db.js';
 import { db } from '../db.js';
 
 /**
@@ -56,7 +56,7 @@ export class VercelService {
         throw new Error(`Vercel API error: ${response.statusText} - ${errorText}`);
       }
 
-      const project = await response.json();
+      const project = await response.json() as any;
 
       logger.info({
         tenantSlug,
@@ -114,7 +114,7 @@ export class VercelService {
         throw new Error(`Vercel API error: ${response.statusText} - ${errorText}`);
       }
 
-      const deployment = await response.json();
+      const deployment = await response.json() as any;
 
       logger.info({
         projectId,
@@ -156,7 +156,7 @@ export class VercelService {
         throw new Error(`Vercel API error: ${response.statusText} - ${errorText}`);
       }
 
-      const domainConfig = await response.json();
+      const domainConfig = await response.json() as any;
 
       logger.info({
         projectId,
@@ -207,7 +207,7 @@ export class VercelService {
         throw new Error(`Vercel API error: ${response.statusText} - ${errorText}`);
       }
 
-      const domainConfig = await response.json();
+      const domainConfig = await response.json() as any;
 
       logger.info({
         projectId,
@@ -249,7 +249,7 @@ export class VercelService {
         throw new Error(`Vercel API error: ${response.statusText}`);
       }
 
-      return await response.json();
+      return await response.json() as any;
     } catch (error) {
       logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',

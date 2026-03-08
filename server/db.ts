@@ -94,10 +94,10 @@ export const db = {
         status, subscription_tier, stripe_customer_id,
         helmies_fee_percentage, monthly_fee, features, metadata
       ) VALUES (
-        ${data.slug}, ${data.name}, ${data.name_en}, ${data.description}, ${data.description_en},
+        ${data.slug}, ${data.name}, ${data.name_en ?? null}, ${data.description ?? null}, ${data.description_en ?? null},
         ${data.status || 'pending'}, ${data.subscription_tier || 'starter'},
-        ${data.stripe_customer_id}, ${data.helmies_fee_percentage || 5},
-        ${data.monthly_fee || 0}, ${data.features || {}}, ${data.metadata || {}}
+        ${data.stripe_customer_id ?? null}, ${data.helmies_fee_percentage ?? 5},
+        ${data.monthly_fee ?? 0}, ${data.features ?? {}}, ${data.metadata ?? {}}
       )
       RETURNING *
     `,
@@ -146,10 +146,15 @@ export const db = {
       LIMIT 1
     `,
 
-    update: (id: string, data: any) => {
-      const keys = Object.keys(data);
-      const setClause = keys.map((key, i) => `${key} = $${i + 2}`).join(', ');
-      return sql`UPDATE public.wizard_sessions SET ${sql.unsafe(setClause)}, updated_at = NOW() WHERE id = $1 RETURNING *`.values(id, ...(Object.values(data) as any[]));
+    update: async (id: string, data: any) => {
+      // Build dynamic update using postgres.js
+      const updates: any = { ...data, updated_at: new Date() };
+      return sql`
+        UPDATE public.wizard_sessions 
+        SET ${sql(updates, ...Object.keys(updates))}
+        WHERE id = ${id}
+        RETURNING *
+      `;
     },
 
     delete: (id: string) => sql`DELETE FROM public.wizard_sessions WHERE id = ${id} RETURNING *`,
@@ -522,4 +527,4 @@ export const db = {
 };
 
 export default db;
-export { logger, extendedLogger };
+export { extendedLogger as logger };

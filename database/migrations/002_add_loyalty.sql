@@ -36,7 +36,7 @@ COMMENT ON TABLE public.loyalty_rewards IS 'Available loyalty rewards that custo
 
 CREATE TABLE IF NOT EXISTS public.loyalty_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  customer_id UUID REFERENCES public.customers(id) ON DELETE CASCADE,
+  customer_id INTEGER REFERENCES public.customers(id) ON DELETE CASCADE,
   points INTEGER NOT NULL,
   type VARCHAR(20) NOT NULL CHECK (type IN ('earned', 'redeemed')),
   description TEXT,

@@ -87,39 +87,116 @@ export class OnboardingPipelineService {
    * Run automation pipeline (GitHub, Vercel, Domain, Email)
    */
   private async runAutomationPipeline(tenant: any, data: any, session: any) {
+    const tenantId = tenant.id;
+    
+    // Helper to update task status
+    const updateTask = async (taskType: string, status: string, taskData?: any, errorMessage?: string) => {
+      try {
+        if (status === 'in_progress') {
+          // Create task if starting
+          await sql`
+            INSERT INTO public.onboarding_tasks (tenant_id, task_type, status, data)
+            VALUES (${tenantId}, ${taskType}, ${status}, ${JSON.stringify(taskData || {})}::jsonb)
+            ON CONFLICT (tenant_id, task_type) DO UPDATE SET
+              status = ${status},
+              data = ${JSON.stringify(taskData || {})}::jsonb,
+              updated_at = NOW()
+          `;
+        } else {
+          await sql`
+            UPDATE public.onboarding_tasks 
+            SET status = ${status}, 
+                data = COALESCE(data, '{}'::jsonb) || ${JSON.stringify(taskData || {})}::jsonb,
+                error_message = ${errorMessage || null},
+                updated_at = NOW()
+            WHERE tenant_id = ${tenantId} AND task_type = ${taskType}
+          `;
+        }
+      } catch (e) {
+        logger.warn({ tenantId, taskType, status, error: e }, 'Failed to update task');
+      }
+    };
+
     try {
-      logger.info({ tenantId: tenant.id }, 'Starting automation pipeline');
+      logger.info({ tenantId }, 'Starting automation pipeline');
 
-      // Step 2a: Create GitHub repository
-      await this.createGitHubRepo(tenant, data);
+      // Initialize all tasks as pending
+      const allTasks = ['github_repo', 'email_account', 'vercel_deploy', 'domain_setup', 'welcome_email'];
+      for (const taskType of allTasks) {
+        await sql`
+          INSERT INTO public.onboarding_tasks (tenant_id, task_type, status)
+          VALUES (${tenantId}, ${taskType}, 'pending')
+          ON CONFLICT (tenant_id, task_type) DO NOTHING
+        `;
+      }
 
-      // Step 2b: Create email account (parallel with GitHub)
-      const emailPromise = this.createEmailAccount(tenant, data);
+      // Step 1: Create GitHub repository
+      await updateTask('github_repo', 'in_progress');
+      try {
+        await this.createGitHubRepo(tenant, data);
+        await updateTask('github_repo', 'completed', { message: 'Repository created' });
+      } catch (error) {
+        await updateTask('github_repo', 'failed', null, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
 
-      // Step 2c: Deploy to Vercel (after GitHub)
-      await this.deployToVercel(tenant, data);
+      // Step 2: Create email account
+      await updateTask('email_account', 'in_progress');
+      try {
+        await this.createEmailAccount(tenant, data);
+        await updateTask('email_account', 'completed', { message: 'Email account created' });
+      } catch (error) {
+        await updateTask('email_account', 'failed', null, error instanceof Error ? error.message : 'Unknown error');
+        // Email failure is non-fatal, continue
+        logger.warn({ tenantId, error }, 'Email creation failed, continuing...');
+      }
 
-      // Step 3: Configure domain
-      await this.configureDomain(tenant, data);
+      // Step 3: Deploy to Vercel
+      await updateTask('vercel_deploy', 'in_progress');
+      try {
+        await this.deployToVercel(tenant, data);
+        await updateTask('vercel_deploy', 'completed', { message: 'Deployment triggered' });
+      } catch (error) {
+        await updateTask('vercel_deploy', 'failed', null, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
 
-      // Wait for email to complete
-      await emailPromise;
+      // Step 4: Configure domain
+      await updateTask('domain_setup', 'in_progress');
+      try {
+        await this.configureDomain(tenant, data);
+        await updateTask('domain_setup', 'completed', { message: 'Domain configured' });
+      } catch (error) {
+        await updateTask('domain_setup', 'failed', null, error instanceof Error ? error.message : 'Unknown error');
+        // Domain failure is non-fatal
+        logger.warn({ tenantId, error }, 'Domain configuration failed, continuing...');
+      }
 
-      // Step 4: Activate tenant
-      await sql`UPDATE public.tenants SET status = 'active' WHERE id = ${tenant.id}`;
+      // Step 5: Activate tenant
+      await sql`UPDATE public.tenants SET status = 'active' WHERE id = ${tenantId}`;
 
-      // Step 5: Send welcome email
-      await this.sendWelcomeEmail(tenant);
+      // Step 6: Send welcome email
+      await updateTask('welcome_email', 'in_progress');
+      try {
+        await this.sendWelcomeEmail(tenant);
+        await updateTask('welcome_email', 'completed', { message: 'Welcome email sent' });
+      } catch (error) {
+        await updateTask('welcome_email', 'failed', null, error instanceof Error ? error.message : 'Unknown error');
+        // Non-fatal
+      }
 
-      logger.info({ tenantId: tenant.id }, 'Automation pipeline completed successfully');
+      logger.info({ tenantId }, 'Automation pipeline completed successfully');
     } catch (error) {
-      logger.error({
-        tenantId: tenant.id,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }, 'Automation pipeline failed');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      logger.error({ tenantId, error: errorMsg }, 'Automation pipeline failed');
 
-      // Mark tenant as needing attention
-      await sql`UPDATE public.tenants SET status = 'pending', metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{automation_error}', ${JSON.stringify(error instanceof Error ? error.message : 'Unknown error')}::jsonb) WHERE id = ${tenant.id}`;
+      // Mark tenant with error
+      await sql`
+        UPDATE public.tenants 
+        SET status = 'pending', 
+            metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{automation_error}', ${JSON.stringify(errorMsg)}::jsonb)
+        WHERE id = ${tenantId}
+      `;
     }
   }
 

@@ -563,4 +563,91 @@ router.post('/session/:id/abandon', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/wizard/progress/:sessionId
+ * Stream real-time progress updates via Server-Sent Events
+ */
+router.get('/progress/:sessionId', async (req: Request, res: Response) => {
+  const { sessionId } = req.params;
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({ type: 'connected', sessionId })}\n\n`);
+
+  // Poll for updates every 2 seconds
+  const pollInterval = setInterval(async () => {
+    try {
+      // Get session
+      const sessionArr = await db.wizardSessions.findOne(sessionId);
+      const session = Array.isArray(sessionArr) ? sessionArr[0] : sessionArr;
+      
+      if (!session) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Session not found' })}\n\n`);
+        clearInterval(pollInterval);
+        res.end();
+        return;
+      }
+
+      // Get tenant if exists
+      if (session.tenant_id) {
+        // Get onboarding tasks
+        const tasks = await sql`
+          SELECT * FROM public.onboarding_tasks 
+          WHERE tenant_id = ${session.tenant_id}
+          ORDER BY created_at ASC
+        `;
+
+        // Get tenant status
+        const tenantArr = await sql`
+          SELECT status, metadata FROM public.tenants WHERE id = ${session.tenant_id}
+        `;
+        const tenant = tenantArr[0];
+
+        res.write(`data: ${JSON.stringify({
+          type: 'progress',
+          status: tenant?.status || 'pending',
+          tasks: tasks.map((t: any) => ({
+            type: t.task_type,
+            status: t.status,
+            data: t.data,
+            error: t.error_message,
+            updatedAt: t.updated_at,
+          })),
+          automationError: tenant?.metadata?.automation_error,
+        })}\n\n`);
+
+        // If completed or failed, close connection
+        if (tenant?.status === 'active' || tenant?.metadata?.automation_error) {
+          res.write(`data: ${JSON.stringify({ 
+            type: 'complete', 
+            status: tenant.status,
+            error: tenant?.metadata?.automation_error 
+          })}\n\n`);
+          clearInterval(pollInterval);
+          res.end();
+        }
+      } else {
+        res.write(`data: ${JSON.stringify({ type: 'waiting', message: 'Creating tenant...' })}\n\n`);
+      }
+    } catch (error) {
+      res.write(`data: ${JSON.stringify({ 
+        type: 'error', 
+        message: error instanceof Error ? error.message : 'Unknown error' 
+      })}\n\n`);
+    }
+  }, 2000);
+
+  // Clean up on client disconnect
+  req.on('close', () => {
+    clearInterval(pollInterval);
+    res.end();
+  });
+});
+
 export default router;

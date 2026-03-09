@@ -28,6 +28,7 @@ import lounasSettingsRouter from './routes/lounas-settings.js';
 import couponsRouter from './routes/coupons.js';
 import deliveryAreasRouter from './routes/delivery-areas.js';
 import restaurantConfigRouter from './routes/restaurant-config.js';
+import onboardingRouter from './routes/onboarding.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -186,6 +187,7 @@ app.use('/api/lounas-settings', authMiddleware, lounasSettingsRouter);
 app.use('/api/coupons', authMiddleware, couponsRouter);
 app.use('/api/delivery-areas', authMiddleware, deliveryAreasRouter);
 app.use('/api/restaurant-config', restaurantConfigRouter);
+app.use('/api/onboarding', onboardingRouter);
 
 
 // 404 handler

@@ -476,4 +476,119 @@ router.post('/generate-description', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/ai/generate-food-image
+ * Generate a single food item image using AI
+ */
+router.post('/generate-food-image', async (req: Request, res: Response) => {
+  try {
+    const { name, nameEn, description, descriptionEn } = req.body;
+
+    if (!name && !nameEn) {
+      return res.status(400).json({ error: 'name or nameEn is required' });
+    }
+
+    const itemName = nameEn || name;
+    const ingredients = descriptionEn || description || itemName;
+
+    const FOOD_IMAGE_API_KEY = process.env.OPENROUTER_FOOD_IMAGE_API_KEY;
+    const FOOD_IMAGE_MODEL = process.env.OPENROUTER_FOOD_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+
+    if (!FOOD_IMAGE_API_KEY) {
+      return res.status(500).json({ error: 'Food image generation API key not configured' });
+    }
+
+    const prompt = `Professional food photography of ${itemName}.
+
+Requirements:
+- TOP VIEW angle (bird's eye view)
+- SQUARE format (1:1 aspect ratio)
+- Show the actual ingredients: ${ingredients}
+- Clean white or light marble background
+- Professional restaurant-quality presentation
+- High resolution, sharp focus
+- Natural lighting, appetizing colors
+- No text or watermarks
+
+The dish should look exactly as it would be served in a high-end restaurant.`;
+
+    logger.info({ itemName, model: FOOD_IMAGE_MODEL }, 'Starting single food image generation');
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${FOOD_IMAGE_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://helmiesbites.com',
+        'X-Title': 'Helmies Bites Menu Images',
+      },
+      body: JSON.stringify({
+        model: FOOD_IMAGE_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const responseText = await response.text();
+    logger.info({ status: response.status, responsePreview: responseText.substring(0, 500), itemName }, 'Food image API response');
+
+    if (!response.ok) {
+      logger.error({ error: responseText, itemName, status: response.status }, 'Food image API error');
+      return res.status(502).json({ error: `Image generation failed: ${response.status}` });
+    }
+
+    const data = JSON.parse(responseText);
+    const message = data.choices?.[0]?.message;
+
+    // Extract image URL from various response formats
+    let imageUrl: string | null = null;
+
+    // Check message.images array
+    if (Array.isArray(message?.images)) {
+      for (const part of message.images) {
+        const url = part.image_url?.url || part.url || part.data;
+        if (url) { imageUrl = url; break; }
+      }
+    }
+
+    // Check content array
+    if (!imageUrl && Array.isArray(message?.content)) {
+      for (const part of message.content) {
+        if (part.type === 'image' || part.type === 'image_url') {
+          const url = part.image_url?.url || part.url || part.data;
+          if (url) { imageUrl = url; break; }
+        }
+      }
+    }
+
+    // Check content string for base64 or URL
+    if (!imageUrl && typeof message?.content === 'string') {
+      if (message.content.startsWith('data:image') || message.content.startsWith('http')) {
+        imageUrl = message.content;
+      }
+    }
+
+    // Check data array format
+    if (!imageUrl && data.data?.[0]?.url) {
+      imageUrl = data.data[0].url;
+    }
+    if (!imageUrl && data.data?.[0]?.b64_json) {
+      imageUrl = `data:image/png;base64,${data.data[0].b64_json}`;
+    }
+
+    if (!imageUrl) {
+      logger.warn({ itemName, response: JSON.stringify(data).substring(0, 1000) }, 'No image in response');
+      return res.status(502).json({ error: 'AI did not return an image' });
+    }
+
+    logger.info({ itemName }, 'Food image generated successfully');
+    res.json({ success: true, imageUrl });
+  } catch (error) {
+    logger.error({ error: error instanceof Error ? error.message : error }, 'Food image generation failed');
+    res.status(500).json({
+      error: 'Failed to generate food image',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;
